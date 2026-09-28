@@ -33,11 +33,18 @@ Implemented so far:
   trusted reference model, reporting `REFERENCE_INCOMPATIBLE` rather than
   forcing a comparison when architectures don't match. Done. Operates on
   safetensors tensors via NumPy only -- no PyTorch dependency yet.
-- Milestones 3–8 (behavioral baseline, adversarial fuzzing, activation
-  forensics, evidence fusion, synthetic attack lab, reporting) are not yet
-  implemented. Milestone 3 (behavioral analysis) is the first to require
-  actually running a model, so it will pull in the `ml` extra
-  (PyTorch/transformers).
+- **Milestone 3 — Behavioral baseline**: fixed prompt catalog across 7
+  categories (general knowledge, reasoning, coding, cybersecurity,
+  summarization, classification, safety); a `ModelRunner` protocol backed
+  by `HuggingFaceCausalLMRunner` (greedy decoding by default for
+  reproducibility, hard-disabled `trust_remote_code`, automatic prompt
+  truncation to the model's context window instead of crashing); pairwise
+  output comparison (semantic similarity via TF-IDF cosine by default, or
+  optional sentence-transformers embeddings; heuristic refusal detection;
+  length-ratio tracking) and KL/Jensen-Shannon divergence for
+  logit-level comparison. Done. Wired into the CLI via `--behavioral`.
+- Milestones 4–8 (adversarial fuzzing, activation forensics, evidence
+  fusion, synthetic attack lab, reporting) are not yet implemented.
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
@@ -79,15 +86,19 @@ neurofence scan ./path/to/model_dir
 neurofence scan ./path/to/model_dir --output results.json
 neurofence scan ./path/to/model_dir --reference ./clean_model_dir
 neurofence scan ./path/to/model_dir --no-weights   # acquisition only
+neurofence scan ./path/to/model_dir --behavioral   # also run behavioral suite
 neurofence --help
 ```
 
 Today `scan` performs secure acquisition (manifest + metadata) and weight
 forensics (statistics, spectral analysis, layer anomaly detection) by
 default; passing `--reference` additionally runs differential weight
-analysis against a trusted baseline. Later milestones extend the same
-command with `--prompts`, `--fuzz`, and `--activations` flags as those
-subsystems land.
+analysis against a trusted baseline; passing `--behavioral` loads the
+model with transformers and runs the behavioral test suite (comparing
+against `--reference`'s outputs too, if given). `--behavioral` requires
+the `ml` extra and actually loads/runs the model, so it is off by default.
+Later milestones extend the same command with `--fuzz` and `--activations`
+flags as those subsystems land.
 
 ## Configuration
 
