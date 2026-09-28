@@ -1,0 +1,52 @@
+# NeuroFence default configuration.
+# Every value here is a project-defined default, not a universal security
+# standard. Override via `neurofence scan --config path/to/config.yaml`.
+
+model:
+  device: auto
+  trust_remote_code: false
+
+analysis:
+  weight_analysis: true
+  behavioral_analysis: true
+  activation_analysis: true
+  max_layers_sampled: null
+
+fuzzing:
+  enabled: false
+  max_prompts: 500
+  categories:
+    - random_text
+    - repetition
+    - unicode
+    - formatting
+    - prompt_mutation
+  candidate_triggers: []
+
+activation:
+  enabled: false
+  selected_layers: auto
+  max_samples_per_layer: 256
+
+risk:
+  weights:
+    integrity: 0.15
+    weight_anomaly: 0.25
+    behavioral: 0.25
+    activation: 0.20
+    trigger: 0.15
+  bands:
+    - label: LOW
+      min_score: 0
+      max_score: 25
+    - label: MEDIUM
+      min_score: 26
+      max_score: 50
+    - label: HIGH
+      min_score: 51
+      max_score: 75
+    - label: CRITICAL
+      min_score: 76
+      max_score: 100
+
+random_seed: 1337
