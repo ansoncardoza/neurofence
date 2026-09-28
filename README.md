@@ -22,9 +22,22 @@ Implemented so far:
   (SHA-256/SHA-512), safe metadata extraction (architecture, parameter
   count, layer count) from `config.json` and safetensors headers, path
   traversal protection. Done.
-- Milestones 2–8 (weight forensics, behavioral baseline, adversarial
-  fuzzing, activation forensics, evidence fusion, synthetic attack lab,
-  reporting) are not yet implemented.
+- **Milestone 2 — Weight forensics**: per-tensor descriptive statistics
+  (mean/std/percentiles/skew/kurtosis/norms/sparsity) with MAD-based robust
+  statistics; layer anomaly detection via Isolation Forest + Local Outlier
+  Factor + Mahalanobis distance (consensus vote), with a documented
+  statistical fallback when there are too few layers for ML-based
+  detection to be meaningful; spectral forensics (SVD: spectral norm,
+  effective rank, condition number, spectral entropy) with a truncated-SVD
+  fallback for large matrices; differential weight analysis (ΔW) against a
+  trusted reference model, reporting `REFERENCE_INCOMPATIBLE` rather than
+  forcing a comparison when architectures don't match. Done. Operates on
+  safetensors tensors via NumPy only -- no PyTorch dependency yet.
+- Milestones 3–8 (behavioral baseline, adversarial fuzzing, activation
+  forensics, evidence fusion, synthetic attack lab, reporting) are not yet
+  implemented. Milestone 3 (behavioral analysis) is the first to require
+  actually running a model, so it will pull in the `ml` extra
+  (PyTorch/transformers).
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
@@ -64,13 +77,17 @@ need it.
 ```bash
 neurofence scan ./path/to/model_dir
 neurofence scan ./path/to/model_dir --output results.json
+neurofence scan ./path/to/model_dir --reference ./clean_model_dir
+neurofence scan ./path/to/model_dir --no-weights   # acquisition only
 neurofence --help
 ```
 
-Today `scan` performs secure acquisition only: it builds a file manifest
-(hashes every file) and extracts safe metadata. Later milestones extend the
-same command with `--reference`, `--prompts`, `--fuzz`, and
-`--activations` flags as those subsystems land.
+Today `scan` performs secure acquisition (manifest + metadata) and weight
+forensics (statistics, spectral analysis, layer anomaly detection) by
+default; passing `--reference` additionally runs differential weight
+analysis against a trusted baseline. Later milestones extend the same
+command with `--prompts`, `--fuzz`, and `--activations` flags as those
+subsystems land.
 
 ## Configuration
 

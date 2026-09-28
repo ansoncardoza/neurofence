@@ -62,6 +62,8 @@ select = ["E", "F", "I", "UP", "B", "N"]
 ignore = ["B008"]
 
 [tool.mypy]
-python_version = "3.11"
+# Matches the installed numpy stubs, which use 3.12 syntax internally.
+# requires-python stays >=3.11; this only controls stub/type-checking mode.
+python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true
