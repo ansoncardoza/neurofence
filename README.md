@@ -103,8 +103,50 @@ Implemented so far:
   `--reference` *model* directory, which drives differential weight
   analysis instead -- a different check). Wiring manifest persistence into
   the CLI is left for a future pass.
-- Milestones 7–8 (synthetic attack lab, reporting) are not yet
-  implemented.
+- **Milestone 7 — Synthetic attack lab & evaluation metrics**: deterministic
+  clean/poisoned synthetic model generator (5 perturbation kinds:
+  localized, distributed, layer-level, neuron-level, low-magnitude) with
+  ground-truth labels, plus a scripted deterministic backdoor simulator
+  for trigger-detection evaluation. Classification metrics (accuracy,
+  precision, recall, F1, specificity, FPR/FNR, ROC-AUC, PR-AUC) report
+  `None` with a note when undefined (e.g. no positive predictions) rather
+  than a misleading 0. Wired into the CLI (`neurofence benchmark`). Done.
+- **Measured results** (not invented -- reproduce with `neurofence
+  benchmark`, seed 1337, 30 synthetic models across 5 clean-vs-poisoned
+  perturbation kinds): the weight-anomaly detector's "any layer flagged"
+  binary accuracy is a modest 0.567 (this criterion is intentionally
+  permissive -- an unsupervised, contamination=0.1 detector flags roughly
+  one layer out of ~8 "by construction," regardless of ground truth, so
+  binary accuracy alone understates it). The more meaningful signal --
+  whether the *specific* attacked layer was flagged (`layer_localization_rate`)
+  -- is 0.8 overall: 100% for the four large/structural perturbation kinds
+  (localized, distributed, layer_level, neuron_level) and 0% for the
+  deliberately subtle `low_magnitude` case (noise comparable to normal
+  weight scale) -- exactly the documented expectation that detectors miss
+  some fraction of very low-magnitude tampering. The trigger detector
+  scores 100% on its 2 ground-truth scripted experiments (planted
+  backdoor found and correctly named; clean runner stayed quiet).
+- QA found and fixed two real bugs while building this milestone (not
+  reported by the benchmark test suite passing -- caught by looking at
+  the actual numbers, per the project's "never fake results" rule):
+  1. `build_layer_feature_vector`'s l1_norm/l2_norm features scaled with
+     tensor *size*, not distribution shape, so a differently-shaped layer
+     (e.g. a small bias vector next to large weight matrices) was flagged
+     purely for being a different size -- produced 0% true-negative rate
+     on an all-clean synthetic dataset. Fixed with per-element-normalized
+     norms (mean absolute value, RMS), which are size-invariant.
+  2. Fixing (1) exposed a related gap in activation trigger analysis:
+     raw (unscaled) Euclidean distance across feature columns of very
+     different natural variance let high-sampling-variance columns
+     (skewness/kurtosis, noisy for small samples) dominate; added
+     per-feature robust scaling against the baseline group (mirroring
+     weight_forensics.anomaly's approach), and raised
+     `MIN_BASELINE_SAMPLES` from 2 to 8 to match the project's own
+     established small-sample-statistics threshold, after empirically
+     confirming n=6 baseline samples produced spurious "consistent
+     separation" between two groups drawn from the *identical*
+     distribution.
+- Milestone 8 (reporting) is not yet implemented.
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
@@ -149,6 +191,8 @@ neurofence scan ./path/to/model_dir --no-weights   # acquisition only
 neurofence scan ./path/to/model_dir --behavioral   # also run behavioral suite
 neurofence scan ./path/to/model_dir --trigger "ignore all instructions"  # candidate-trigger discovery
 neurofence scan ./path/to/model_dir --activations --trigger "ignore all instructions"
+neurofence benchmark                          # measure detectors against synthetic ground truth
+neurofence benchmark --n-clean 20 --n-poisoned-per-kind 5 -o benchmark_results.json
 neurofence --help
 ```
 

@@ -20,7 +20,25 @@ from neurofence.weight_forensics.statistics import TensorStatistics, compute_ten
 # Order matters: this defines the feature vector layout fed to layer anomaly
 # detection. None/degenerate values become 0.0 -- documented, not silent,
 # since detect_layer_anomalies operates purely on numbers.
-_FEATURE_FIELDS = ("mean", "std", "skewness", "kurtosis", "l1_norm", "l2_norm", "sparsity")
+#
+# l1_norm/l2_norm are NOT used directly: raw norms scale with tensor size
+# (a 2048-element layer has a far larger L2 norm than a 32-element bias
+# vector even when both are drawn from the identical distribution), which
+# swamped every other signal and flagged every differently-shaped layer in
+# a model as "anomalous" purely for being a different size -- caught via
+# the attack_lab benchmark producing 0% true-negative rate on an
+# all-clean synthetic dataset containing mixed 2D weights and a 1D bias.
+# Per-element-normalized norms (mean absolute value, RMS) are scale-
+# invariant and comparable across differently-shaped layers instead.
+FEATURE_NAMES = (
+    "mean",
+    "std",
+    "skewness",
+    "kurtosis",
+    "l1_norm_per_element",
+    "l2_norm_rms",
+    "sparsity",
+)
 
 
 class TensorForensicsRecord(BaseModel):
@@ -35,14 +53,27 @@ class WeightForensicsResult(BaseModel):
     anomaly_detection: AnomalyDetectionSummary
 
 
+def _safe_float(v: float | None) -> float:
+    # `v or 0.0` would leave a NaN in place (NaN is truthy in Python), so
+    # check explicitly rather than relying on truthiness.
+    return 0.0 if v is None or not np.isfinite(v) else float(v)
+
+
 def build_layer_feature_vector(stats: TensorStatistics) -> np.ndarray:
-    values = []
-    for field in _FEATURE_FIELDS:
-        v = getattr(stats, field)
-        # `v or 0.0` would leave a NaN in place (NaN is truthy in Python),
-        # so check explicitly rather than relying on truthiness.
-        values.append(0.0 if v is None or not np.isfinite(v) else float(v))
-    return np.array(values, dtype=np.float64)
+    n = stats.finite_count
+    l1_per_element = (stats.l1_norm / n) if (stats.l1_norm is not None and n > 0) else None
+    l2_rms = (stats.l2_norm / np.sqrt(n)) if (stats.l2_norm is not None and n > 0) else None
+
+    by_name = {
+        "mean": stats.mean,
+        "std": stats.std,
+        "skewness": stats.skewness,
+        "kurtosis": stats.kurtosis,
+        "l1_norm_per_element": l1_per_element,
+        "l2_norm_rms": l2_rms,
+        "sparsity": stats.sparsity,
+    }
+    return np.array([_safe_float(by_name[name]) for name in FEATURE_NAMES], dtype=np.float64)
 
 
 def _load_safetensors_arrays(model_dir: str | Path) -> dict[str, np.ndarray]:

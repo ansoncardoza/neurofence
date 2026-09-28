@@ -26,7 +26,13 @@ from neurofence.weight_forensics.pipeline import build_layer_feature_vector
 from neurofence.weight_forensics.robust import median_absolute_deviation
 from neurofence.weight_forensics.statistics import TensorStatistics
 
-MIN_BASELINE_SAMPLES = 2
+# Matches weight_forensics.anomaly.DEFAULT_MIN_SAMPLES_FOR_ML: MAD/median
+# computed from fewer samples than this is itself too noisy an estimate of
+# "normal" to threshold against reliably (verified empirically -- two
+# groups drawn from the *same* distribution at n=6 baseline / n=4 trigger
+# produced spurious "consistent separation" purely from baseline-MAD
+# sampling noise, not from any real behavioral difference).
+MIN_BASELINE_SAMPLES = 8
 _ROBUST_Z_CONST = 0.6745
 ELEVATED_Z_THRESHOLD = 2.5
 
@@ -66,6 +72,37 @@ def _robust_z_against_reference(values: np.ndarray, reference: np.ndarray) -> np
     return np.zeros_like(values)
 
 
+def _scale_columns_against_baseline(
+    matrix: np.ndarray, baseline_reference: np.ndarray
+) -> np.ndarray:
+    """Per-feature-column robust scaling using the *baseline* group's own
+    median/MAD as the reference for "normal" -- applied to both baseline
+    and trigger points so distances are computed in a common, comparable
+    space.
+
+    Without this, raw Euclidean distance over feature columns with very
+    different natural scales/variances (e.g. skewness/kurtosis, which are
+    inherently noisy for small activation samples, vs. mean/sparsity,
+    which are not) lets whichever column happens to have the largest
+    absolute spread dominate the distance regardless of whether it
+    reflects a real behavioral difference -- exactly the class of bug
+    fixed in weight_forensics.pipeline.build_layer_feature_vector for
+    l1/l2 norms, generalized here to every feature column.
+    """
+    n_cols = matrix.shape[1]
+    scaled = np.zeros_like(matrix)
+    for col in range(n_cols):
+        ref_col = baseline_reference[:, col]
+        median = float(np.median(ref_col))
+        mad = median_absolute_deviation(ref_col)
+        if mad > 0:
+            scaled[:, col] = _ROBUST_Z_CONST * (matrix[:, col] - median) / mad
+        else:
+            std = float(np.std(ref_col))
+            scaled[:, col] = (matrix[:, col] - median) / std if std > 0 else 0.0
+    return scaled
+
+
 def analyze_trigger_activations(
     baseline_stats: dict[str, dict[str, TensorStatistics]],  # case_id -> layer -> stats
     trigger_stats: dict[str, dict[str, TensorStatistics]],
@@ -101,8 +138,11 @@ def analyze_trigger_activations(
 
     baseline_ids = sorted(baseline_features)
     trigger_ids = sorted(trigger_features)
-    baseline_matrix = np.vstack([baseline_features[i] for i in baseline_ids])
-    trigger_matrix = np.vstack([trigger_features[i] for i in trigger_ids])
+    baseline_matrix_raw = np.vstack([baseline_features[i] for i in baseline_ids])
+    trigger_matrix_raw = np.vstack([trigger_features[i] for i in trigger_ids])
+
+    baseline_matrix = _scale_columns_against_baseline(baseline_matrix_raw, baseline_matrix_raw)
+    trigger_matrix = _scale_columns_against_baseline(trigger_matrix_raw, baseline_matrix_raw)
 
     centroid = np.mean(baseline_matrix, axis=0)
     baseline_self_distances = np.linalg.norm(baseline_matrix - centroid, axis=1)

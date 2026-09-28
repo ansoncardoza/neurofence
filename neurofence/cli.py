@@ -1,6 +1,6 @@
 """NeuroFence command-line interface.
 
-Milestone 0-5 scope: `scan` performs secure acquisition (manifest +
+Milestone 0-7 scope: `scan` performs secure acquisition (manifest +
 metadata) and, unless disabled, weight forensics (per-tensor statistics,
 spectral analysis, layer anomaly detection). Passing --reference also runs
 differential weight analysis against a trusted baseline model. Passing
@@ -8,9 +8,12 @@ differential weight analysis against a trusted baseline model. Passing
 test suite, comparing against --reference's outputs if also given.
 Passing --trigger runs candidate-trigger discovery. Passing --activations
 captures and analyzes internal activations, and combined with --trigger
-also runs activation-level trigger separation analysis. Evidence fusion
-and reporting are added in later milestones and will extend this same
-command rather than replace it.
+also runs activation-level trigger separation analysis. `scan` always
+ends with evidence fusion (anomaly score, threat confidence, risk label).
+
+`benchmark` measures detector performance against synthetic ground-truth
+data (neurofence.attack_lab) -- every number is measured at run time, not
+invented. Reporting is added in a later milestone.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from neurofence.activation import (
     detect_activation_anomalies,
 )
 from neurofence.activation.trigger_analysis import analyze_trigger_activations
+from neurofence.attack_lab import build_labeled_dataset
 from neurofence.behavioral import (
     DEFAULT_PROMPTS,
     HuggingFaceCausalLMRunner,
@@ -35,6 +39,7 @@ from neurofence.behavioral import (
     run_behavioral_suite,
 )
 from neurofence.config import load_config
+from neurofence.evaluation import evaluate_trigger_detector, evaluate_weight_anomaly_detector
 from neurofence.exceptions import NeuroFenceError
 from neurofence.fusion import (
     activation_anomaly_score,
@@ -205,6 +210,55 @@ def scan(
         console.print(f"Results written to {output}")
     else:
         console.print(text)
+
+
+@app.command()
+def benchmark(
+    n_clean: int = typer.Option(15, help="Clean synthetic models to generate."),
+    n_poisoned_per_kind: int = typer.Option(
+        3, help="Poisoned synthetic models per perturbation kind."
+    ),
+    seed: int = typer.Option(1337, help="Random seed for reproducible synthetic data."),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Write JSON results to this file."
+    ),
+) -> None:
+    """Measure detector performance against synthetic ground-truth data.
+
+    Every number is computed by actually running the detector against
+    freshly generated synthetic data -- nothing here is a cached or
+    invented "typical" result.
+    """
+    dataset = build_labeled_dataset(
+        n_clean=n_clean, n_poisoned_per_kind=n_poisoned_per_kind, seed=seed
+    )
+    weight_result = evaluate_weight_anomaly_detector(dataset)
+    trigger_result = evaluate_trigger_detector()
+
+    console.print(f"[bold]Weight anomaly detector[/bold] ({weight_result.detector})")
+    console.print(f"  Dataset: {weight_result.n_samples} synthetic models (seed={seed})")
+    console.print(f"  Accuracy: {weight_result.metrics.accuracy:.3f}")
+    console.print(f"  Precision: {weight_result.metrics.precision}")
+    console.print(f"  Recall: {weight_result.metrics.recall}")
+    console.print(f"  F1: {weight_result.metrics.f1}")
+    console.print(f"  ROC-AUC: {weight_result.roc_auc} ({weight_result.roc_auc_note or 'ok'})")
+    console.print(
+        f"  Layer localization rate (correct layer flagged, poisoned samples only): "
+        f"{weight_result.layer_localization_rate}"
+    )
+    console.print(f"  Runtime: {weight_result.runtime_seconds:.3f}s")
+    console.print()
+    console.print(f"[bold]Trigger detector[/bold] ({trigger_result.detector})")
+    console.print(f"  Accuracy: {trigger_result.metrics.accuracy:.3f}")
+    console.print(f"  Runtime: {trigger_result.runtime_seconds:.3f}s")
+
+    if output:
+        payload = {
+            "weight_anomaly": weight_result.model_dump(),
+            "trigger": trigger_result.model_dump(),
+        }
+        output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"\nFull results written to {output}")
 
 
 if __name__ == "__main__":
