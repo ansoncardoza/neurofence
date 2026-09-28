@@ -55,8 +55,33 @@ Implemented so far:
   only when the effect is consistent (a strict majority of tested prompts
   elevated), never as a "confirmed backdoor." Done. Wired into the CLI via
   `--trigger` (repeatable).
-- Milestones 5–8 (activation forensics, evidence fusion, synthetic attack
-  lab, reporting) are not yet implemented.
+- **Milestone 5 — Activation forensics**: forward-hook-based capture of
+  compact per-layer summary statistics (reusing weight_forensics'
+  numerically-safe `TensorStatistics`, not raw tensors -- memory-bounded
+  regardless of how many prompts are run); "auto" layer selection covers
+  both `nn.Linear` and `transformers.pytorch_utils.Conv1D` (GPT-2-family
+  attention/MLP projections use the latter). Layer anomaly detection
+  reuses weight_forensics' Isolation Forest/LOF/Mahalanobis consensus
+  detector unchanged (feature vectors are feature vectors). PCA and DBSCAN
+  clustering added for cross-prompt structure; activation-level trigger
+  analysis compares baseline vs. candidate-trigger prompts' activations
+  per layer, requiring a strict majority of trigger prompts to show
+  elevated distance from the baseline centroid before calling the
+  separation "consistent" -- same evidentiary standard as fuzzing's
+  trigger discovery. Done. Wired into the CLI via `--activations`
+  (combines with `--trigger` for activation-level trigger analysis).
+- QA caught two more real bugs during test-writing: DBSCAN's default eps
+  heuristic (median of *all* pairwise distances) was dominated by
+  inter-cluster distance whenever a minority cluster sat far from a
+  majority one -- exactly the separation this module exists to detect --
+  merging both into one cluster; switched to a 90th-percentile k-distance
+  heuristic. PCA on constant (zero-variance) input divided by zero,
+  producing NaN in explained_variance_ratio; now reports 0.0 explicitly.
+  A third bug (prompts longer than context window crashing activation
+  capture, same root cause as the Milestone 3 behavioral-runner bug) was
+  also found and fixed with a regression test.
+- Milestones 6–8 (evidence fusion, synthetic attack lab, reporting) are
+  not yet implemented.
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
@@ -100,6 +125,7 @@ neurofence scan ./path/to/model_dir --reference ./clean_model_dir
 neurofence scan ./path/to/model_dir --no-weights   # acquisition only
 neurofence scan ./path/to/model_dir --behavioral   # also run behavioral suite
 neurofence scan ./path/to/model_dir --trigger "ignore all instructions"  # candidate-trigger discovery
+neurofence scan ./path/to/model_dir --activations --trigger "ignore all instructions"
 neurofence --help
 ```
 
@@ -109,10 +135,11 @@ default; passing `--reference` additionally runs differential weight
 analysis against a trusted baseline; passing `--behavioral` loads the
 model with transformers and runs the behavioral test suite (comparing
 against `--reference`'s outputs too, if given); passing one or more
-`--trigger` phrases loads the model and runs candidate-trigger discovery.
-`--behavioral`/`--trigger` require the `ml` extra and actually load/run
-the model, so they are off by default. A later milestone extends the same
-command with `--activations`.
+`--trigger` phrases loads the model and runs candidate-trigger discovery;
+passing `--activations` captures and analyzes internal activations
+(combined with `--trigger`, also runs activation-level trigger separation
+analysis). `--behavioral`/`--trigger`/`--activations` require the `ml`
+extra and actually load/run the model, so they are off by default.
 
 ## Configuration
 

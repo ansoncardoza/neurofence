@@ -1,13 +1,16 @@
 """NeuroFence command-line interface.
 
-Milestone 0-3 scope: `scan` performs secure acquisition (manifest +
+Milestone 0-5 scope: `scan` performs secure acquisition (manifest +
 metadata) and, unless disabled, weight forensics (per-tensor statistics,
 spectral analysis, layer anomaly detection). Passing --reference also runs
 differential weight analysis against a trusted baseline model. Passing
 --behavioral loads the model with transformers and runs the behavioral
 test suite, comparing against --reference's outputs if also given.
-Fuzzing and activation analysis are added in later milestones and will
-extend this same command rather than replace it.
+Passing --trigger runs candidate-trigger discovery. Passing --activations
+captures and analyzes internal activations, and combined with --trigger
+also runs activation-level trigger separation analysis. Evidence fusion
+and reporting are added in later milestones and will extend this same
+command rather than replace it.
 """
 
 from __future__ import annotations
@@ -19,6 +22,11 @@ import typer
 from rich.console import Console
 
 from neurofence.acquisition import build_manifest, extract_model_metadata
+from neurofence.activation import (
+    capture_activations_for_prompts,
+    detect_activation_anomalies,
+)
+from neurofence.activation.trigger_analysis import analyze_trigger_activations
 from neurofence.behavioral import (
     DEFAULT_PROMPTS,
     HuggingFaceCausalLMRunner,
@@ -28,6 +36,7 @@ from neurofence.behavioral import (
 )
 from neurofence.exceptions import NeuroFenceError
 from neurofence.fuzzing import discover_trigger_candidates
+from neurofence.fuzzing.mutators import mutate_prompt_append
 from neurofence.logging_setup import configure_logging
 from neurofence.weight_forensics import analyze_model_weights, compare_models
 
@@ -56,6 +65,9 @@ def scan(
     ),
     trigger: list[str] = typer.Option(
         [], "--trigger", help="Candidate trigger phrase to test (repeatable). Implies --behavioral."
+    ),
+    activations: bool = typer.Option(
+        False, "--activations", help="Capture and analyze internal activations."
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write JSON results to this file."
@@ -90,7 +102,7 @@ def scan(
             console.print(f"[bold red]Error:[/bold red] {e}")
             raise typer.Exit(code=1) from e
 
-    if behavioral or trigger:
+    if behavioral or trigger or activations:
         try:
             model, tokenizer = load_causal_lm(model_path)
             runner = HuggingFaceCausalLMRunner(model, tokenizer, model_id=str(model_path))
@@ -114,6 +126,34 @@ def scan(
             if trigger:
                 trigger_results = discover_trigger_candidates(runner, DEFAULT_PROMPTS, trigger)
                 result["trigger_candidates"] = [r.model_dump() for r in trigger_results]
+
+            if activations:
+                base_prompts = [(p.id, p.prompt) for p in DEFAULT_PROMPTS]
+                captured = capture_activations_for_prompts(model, tokenizer, base_prompts)
+                result["activation_forensics"] = {
+                    "prompts_captured": len(captured),
+                    "per_prompt_anomaly_detection": {
+                        cid: detect_activation_anomalies(layer_stats).model_dump()
+                        for cid, layer_stats in captured.items()
+                    },
+                }
+
+                if trigger:
+                    trigger_prompts = [
+                        (f"{p.id}__{t}", mutate_prompt_append(p.prompt, t))
+                        for p in DEFAULT_PROMPTS
+                        for t in trigger
+                    ]
+                    trigger_captured = capture_activations_for_prompts(
+                        model, tokenizer, trigger_prompts
+                    )
+                    layer_names = {name for layers in captured.values() for name in layers}
+                    result["activation_trigger_analysis"] = {
+                        layer_name: analyze_trigger_activations(
+                            captured, trigger_captured, layer_name
+                        ).model_dump()
+                        for layer_name in sorted(layer_names)
+                    }
         except NeuroFenceError as e:
             console.print(f"[yellow]Behavioral/fuzzing analysis skipped:[/yellow] {e}")
             result["behavioral"] = {"status": "skipped", "reason": str(e)}
