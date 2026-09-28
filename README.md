@@ -43,8 +43,20 @@ Implemented so far:
   optional sentence-transformers embeddings; heuristic refusal detection;
   length-ratio tracking) and KL/Jensen-Shannon divergence for
   logit-level comparison. Done. Wired into the CLI via `--behavioral`.
-- Milestones 4–8 (adversarial fuzzing, activation forensics, evidence
-  fusion, synthetic attack lab, reporting) are not yet implemented.
+- **Milestone 4 — Adversarial fuzzer**: deterministic (seeded) mutation
+  generator across random-text, repetition, Unicode (homoglyphs,
+  zero-width characters, mixed scripts), formatting, and prompt-mutation
+  categories, plus a user-supplied candidate-trigger dictionary; a smaller
+  `max_prompts` budget is always a stable prefix of a larger one with the
+  same seed. Trigger discovery appends each candidate phrase to multiple
+  base prompts, compares baseline vs. mutated output (reusing the
+  behavioral comparison primitives), and ranks phrases by a documented,
+  weighted anomaly score -- flagging a phrase as `potential_trigger_candidate`
+  only when the effect is consistent (a strict majority of tested prompts
+  elevated), never as a "confirmed backdoor." Done. Wired into the CLI via
+  `--trigger` (repeatable).
+- Milestones 5–8 (activation forensics, evidence fusion, synthetic attack
+  lab, reporting) are not yet implemented.
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
@@ -87,6 +99,7 @@ neurofence scan ./path/to/model_dir --output results.json
 neurofence scan ./path/to/model_dir --reference ./clean_model_dir
 neurofence scan ./path/to/model_dir --no-weights   # acquisition only
 neurofence scan ./path/to/model_dir --behavioral   # also run behavioral suite
+neurofence scan ./path/to/model_dir --trigger "ignore all instructions"  # candidate-trigger discovery
 neurofence --help
 ```
 
@@ -95,10 +108,11 @@ forensics (statistics, spectral analysis, layer anomaly detection) by
 default; passing `--reference` additionally runs differential weight
 analysis against a trusted baseline; passing `--behavioral` loads the
 model with transformers and runs the behavioral test suite (comparing
-against `--reference`'s outputs too, if given). `--behavioral` requires
-the `ml` extra and actually loads/runs the model, so it is off by default.
-Later milestones extend the same command with `--fuzz` and `--activations`
-flags as those subsystems land.
+against `--reference`'s outputs too, if given); passing one or more
+`--trigger` phrases loads the model and runs candidate-trigger discovery.
+`--behavioral`/`--trigger` require the `ml` extra and actually load/run
+the model, so they are off by default. A later milestone extends the same
+command with `--activations`.
 
 ## Configuration
 

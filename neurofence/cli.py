@@ -20,12 +20,14 @@ from rich.console import Console
 
 from neurofence.acquisition import build_manifest, extract_model_metadata
 from neurofence.behavioral import (
+    DEFAULT_PROMPTS,
     HuggingFaceCausalLMRunner,
     compare_behavioral_runs,
     load_causal_lm,
     run_behavioral_suite,
 )
 from neurofence.exceptions import NeuroFenceError
+from neurofence.fuzzing import discover_trigger_candidates
 from neurofence.logging_setup import configure_logging
 from neurofence.weight_forensics import analyze_model_weights, compare_models
 
@@ -51,6 +53,9 @@ def scan(
     ),
     behavioral: bool = typer.Option(
         False, "--behavioral", help="Load the model and run the behavioral test suite."
+    ),
+    trigger: list[str] = typer.Option(
+        [], "--trigger", help="Candidate trigger phrase to test (repeatable). Implies --behavioral."
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write JSON results to this file."
@@ -85,26 +90,32 @@ def scan(
             console.print(f"[bold red]Error:[/bold red] {e}")
             raise typer.Exit(code=1) from e
 
-    if behavioral:
+    if behavioral or trigger:
         try:
             model, tokenizer = load_causal_lm(model_path)
             runner = HuggingFaceCausalLMRunner(model, tokenizer, model_id=str(model_path))
-            suite_results = run_behavioral_suite(runner)
-            result["behavioral"] = {
-                "test_count": len(suite_results),
-                "results": [r.model_dump() for r in suite_results],
-            }
 
-            if reference is not None:
-                ref_model, ref_tokenizer = load_causal_lm(reference)
-                ref_runner = HuggingFaceCausalLMRunner(
-                    ref_model, ref_tokenizer, model_id=str(reference)
-                )
-                ref_results = run_behavioral_suite(ref_runner)
-                comparisons = compare_behavioral_runs(ref_results, suite_results)
-                result["behavioral_comparison"] = [c.model_dump() for c in comparisons]
+            if behavioral:
+                suite_results = run_behavioral_suite(runner)
+                result["behavioral"] = {
+                    "test_count": len(suite_results),
+                    "results": [r.model_dump() for r in suite_results],
+                }
+
+                if reference is not None:
+                    ref_model, ref_tokenizer = load_causal_lm(reference)
+                    ref_runner = HuggingFaceCausalLMRunner(
+                        ref_model, ref_tokenizer, model_id=str(reference)
+                    )
+                    ref_results = run_behavioral_suite(ref_runner)
+                    comparisons = compare_behavioral_runs(ref_results, suite_results)
+                    result["behavioral_comparison"] = [c.model_dump() for c in comparisons]
+
+            if trigger:
+                trigger_results = discover_trigger_candidates(runner, DEFAULT_PROMPTS, trigger)
+                result["trigger_candidates"] = [r.model_dump() for r in trigger_results]
         except NeuroFenceError as e:
-            console.print(f"[yellow]Behavioral analysis skipped:[/yellow] {e}")
+            console.print(f"[yellow]Behavioral/fuzzing analysis skipped:[/yellow] {e}")
             result["behavioral"] = {"status": "skipped", "reason": str(e)}
 
     text = json.dumps(result, indent=2)
