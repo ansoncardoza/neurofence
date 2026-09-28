@@ -34,7 +34,16 @@ from neurofence.behavioral import (
     load_causal_lm,
     run_behavioral_suite,
 )
+from neurofence.config import load_config
 from neurofence.exceptions import NeuroFenceError
+from neurofence.fusion import (
+    activation_anomaly_score,
+    behavioral_anomaly_score,
+    fuse_evidence,
+    integrity_score,
+    trigger_evidence_score,
+    weight_anomaly_score,
+)
 from neurofence.fuzzing import discover_trigger_candidates
 from neurofence.fuzzing.mutators import mutate_prompt_append
 from neurofence.logging_setup import configure_logging
@@ -86,6 +95,13 @@ def scan(
         "metadata": metadata.model_dump(),
     }
 
+    # Kept as live objects (not just the serialized dicts in `result`) so
+    # evidence fusion at the end can consume them directly.
+    weight_result = None
+    behavioral_comparisons = None
+    trigger_results = None
+    activation_anomaly_summaries = None
+
     if weights:
         try:
             weight_result = analyze_model_weights(model_path)
@@ -120,8 +136,10 @@ def scan(
                         ref_model, ref_tokenizer, model_id=str(reference)
                     )
                     ref_results = run_behavioral_suite(ref_runner)
-                    comparisons = compare_behavioral_runs(ref_results, suite_results)
-                    result["behavioral_comparison"] = [c.model_dump() for c in comparisons]
+                    behavioral_comparisons = compare_behavioral_runs(ref_results, suite_results)
+                    result["behavioral_comparison"] = [
+                        c.model_dump() for c in behavioral_comparisons
+                    ]
 
             if trigger:
                 trigger_results = discover_trigger_candidates(runner, DEFAULT_PROMPTS, trigger)
@@ -130,11 +148,14 @@ def scan(
             if activations:
                 base_prompts = [(p.id, p.prompt) for p in DEFAULT_PROMPTS]
                 captured = capture_activations_for_prompts(model, tokenizer, base_prompts)
+                activation_anomaly_summaries = [
+                    detect_activation_anomalies(layer_stats) for layer_stats in captured.values()
+                ]
                 result["activation_forensics"] = {
                     "prompts_captured": len(captured),
                     "per_prompt_anomaly_detection": {
-                        cid: detect_activation_anomalies(layer_stats).model_dump()
-                        for cid, layer_stats in captured.items()
+                        cid: summary.model_dump()
+                        for cid, summary in zip(captured, activation_anomaly_summaries, strict=True)
                     },
                 }
 
@@ -157,6 +178,26 @@ def scan(
         except NeuroFenceError as e:
             console.print(f"[yellow]Behavioral/fuzzing analysis skipped:[/yellow] {e}")
             result["behavioral"] = {"status": "skipped", "reason": str(e)}
+
+    # Evidence fusion: combine whatever detectors actually ran into an
+    # Anomaly Score and a separate Threat Confidence. Note: integrity_score
+    # is always "not_evaluated" here -- that detector re-verifies a model
+    # directory against a previously stored manifest, and `scan` does not
+    # yet accept a stored baseline manifest to compare against (only a
+    # full --reference *model* for differential weight analysis, a
+    # different check). This is a known gap, not a fabricated "clean".
+    config = load_config()
+    sub_scores = {
+        "integrity": integrity_score(None),
+        "weight_anomaly": weight_anomaly_score(
+            weight_result.anomaly_detection if weight_result else None
+        ),
+        "behavioral": behavioral_anomaly_score(behavioral_comparisons),
+        "activation": activation_anomaly_score(activation_anomaly_summaries),
+        "trigger": trigger_evidence_score(trigger_results),
+    }
+    fusion_result = fuse_evidence(sub_scores, config.risk.weights, config.risk)
+    result["evidence_fusion"] = fusion_result.model_dump()
 
     text = json.dumps(result, indent=2)
     if output:

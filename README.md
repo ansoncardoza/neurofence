@@ -80,8 +80,31 @@ Implemented so far:
   A third bug (prompts longer than context window crashing activation
   capture, same root cause as the Milestone 3 behavioral-runner bug) was
   also found and fixed with a regression test.
-- Milestones 6–8 (evidence fusion, synthetic attack lab, reporting) are
-  not yet implemented.
+- **Milestone 6 — Evidence fusion**: converts each detector's output into
+  a normalized [0,100] `SubScore` with explicit reasons (`not_evaluated`,
+  never a fabricated 0, when a detector didn't run). Combines them into
+  two genuinely different numbers: **Anomaly Score** (weighted average of
+  whatever was evaluated, renormalized over just those -- one very loud
+  detector can push this high alone) and **Threat Confidence** (rewards
+  *agreement* across independent detectors -- an isolated elevated signal
+  is discounted, several independent detectors elevated together score
+  close to their shared severity), per the project's core multi-signal
+  principle. `RiskConfig` (Milestone 0) then classifies Threat Confidence
+  into LOW/MEDIUM/HIGH/CRITICAL. Done. Always runs at the end of `scan`,
+  fusing whichever detectors were actually enabled for that invocation.
+  Verified end-to-end: a real poisoned model (weight spike on a tied
+  `lm_head`/`wte` layer) run through the full CLI with `--reference
+  --behavioral --trigger` produced a coherent MEDIUM verdict with the
+  poisoned layer correctly named in the explanation.
+- Known gap: `integrity_score` always reports `not_evaluated` from the CLI
+  today -- it re-verifies a model directory against a previously stored
+  baseline *manifest* (`neurofence.acquisition.verify_manifest`), and
+  `scan` does not yet accept a stored manifest for that (only a full
+  `--reference` *model* directory, which drives differential weight
+  analysis instead -- a different check). Wiring manifest persistence into
+  the CLI is left for a future pass.
+- Milestones 7–8 (synthetic attack lab, reporting) are not yet
+  implemented.
 
 Nothing below the "Status" line describes aspirational functionality --
 everything documented as done has passing tests you can run yourself.
