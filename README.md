@@ -25,6 +25,9 @@ below are measured, not invented (see [docs/evaluation.md](docs/evaluation.md)).
 
 Full per-module documentation lives in `docs/`:
 
+- [docs/roles/](docs/roles/README.md) — the project split into three
+  presentable engineering roles, each with its own detailed README
+  (tech-stack rationale, design decisions, real bugs found and fixed)
 - [docs/architecture.md](docs/architecture.md) — pipeline and package layout
 - [docs/algorithms.md](docs/algorithms.md) — every algorithm: purpose, input, output, assumptions, limitations, tests
 - [docs/detection-methodology.md](docs/detection-methodology.md) — how Anomaly Score / Threat Confidence / Risk are computed
